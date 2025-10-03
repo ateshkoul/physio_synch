@@ -1,0 +1,175 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+# general function
+```{r}
+rm(list=ls())
+library(MANOVA.RM)
+library(plyr)
+library(psych)
+library(ez)
+source('./Libraries/IBS_load_data.R')
+source("./Libraries/MBS_load_data.R")
+save_dir <- "Combined_data\\"
+
+
+compute_ges_t_test <- function(t_test_result){
+
+  # Get t-statistic and degrees of freedom
+  t_statistic <- t_test_result$statistic
+  df <- t_test_result$parameter
+
+  # Compute generalized eta squared
+  eta_squared_G <- t_statistic^2 / (t_statistic^2 + df)
+  return(eta_squared_G)
+}
+```
+
+# Intra
+
+```{r}
+data_avg_INS <- IBS_load_ECG_EDA_Resp_intra_data()
+data_MBS <- MBS_load_ECG_EDA_intra_data()
+
+
+INS_pupil_data <- IBS_load_pupil_intra_data()
+
+MBS_pupil_data <- MBS_load_pupil_intra_data()
+
+data_combined_ECG_EDA_Resp <- rbind(data_avg_INS,data_MBS)
+data_combined_pupil <- rbind(INS_pupil_data,MBS_pupil_data)
+  
+  
+  
+data_all <- merge(data_combined_ECG_EDA_Resp,data_combined_pupil,by=c("Dyd_no","Vision","exp"))
+
+
+manova_model <- multRM(cbind(bpm_avg,EDA_avg,rsp_avg,pupil_dia)~Vision, 
+                data = data_all, subject = "Dyd_no", within = c("Vision"),
+                resampling = "WildBS",
+                iter = 1000,  alpha = 0.01, seed = 987)
+summary(manova_model)
+
+
+```
+
+## p-tables
+```{r}
+p_table_NoOcc_Occ <- ddply(data_long,.(Modality),summarise,
+                           p_values =signif(t.test(corr_coef[Vision=="NoOcc"],corr_coef[Vision=="Occ"],paired=TRUE)[[3]],2),
+                           t_values =t.test(corr_coef[Vision=="NoOcc"],corr_coef[Vision=="Occ"],paired=TRUE)[[1]],
+                           ges=compute_ges_t_test(t.test(corr_coef[Vision=="NoOcc"],corr_coef[Vision=="Occ"],paired=TRUE)),
+                           cohens_d = signif(mean(corr_coef[Vision=="NoOcc"]-corr_coef[Vision=="Occ"])/sd(corr_coef[Vision=="NoOcc"]-corr_coef[Vision=="Occ"]),2))
+
+p_table_NoOcc_Occ["adj_p"] <- signif(p.adjust(p_table_NoOcc_Occ$p_values,method = "BH"),2)
+p_table_NoOcc_Occ["adj_sig"] <- p.adjust(p_table_NoOcc_Occ$p_values,method = "BH")<0.05
+
+```
+
+
+# Inter
+
+```{r}
+
+
+INS_data_ECG <- INS_load_ECG_EDA_Resp_corr_data("ECG")
+MBS_data_ECG <- MBS_load_ECG_EDA_Resp_pupil_corr_data("ECG")
+
+INS_data_EDA <- INS_load_ECG_EDA_Resp_corr_data("EDA")
+MBS_data_EDA <- MBS_load_ECG_EDA_Resp_pupil_corr_data("EDA")
+
+
+INS_data_Resp <- INS_load_ECG_EDA_Resp_corr_data("Resp")
+MBS_data_Resp <- MBS_load_ECG_EDA_Resp_pupil_corr_data("Resp")
+
+INS_pupil_data <- INS_load_pupil_corr_data()
+MBS_pupil_data <- MBS_load_ECG_EDA_Resp_pupil_corr_data("Pupil")
+
+
+
+INS_data <- rbind(INS_data_ECG,INS_data_EDA,INS_data_Resp,INS_pupil_data)
+MBS_data <- rbind(MBS_data_ECG,MBS_data_EDA,MBS_data_Resp,MBS_pupil_data)
+
+
+data_combined <- rbind(INS_data,MBS_data)
+
+
+## Manova
+
+data <- reshape(data_combined,direction = "wide",v.names = "corr_coef",timevar = "Modality",idvar = c("id","Vision"))
+
+data$corr_coef.Pupil[is.nan(data$corr_coef.Pupil)] <- mean(data$corr_coef.Pupil,na.rm=TRUE)
+
+manova_model <- multRM(cbind(corr_coef.ECG,corr_coef.EDA,corr_coef.Resp,corr_coef.Pupil)~Vision, 
+                data = data, subject = "id", within = c("Vision"),
+                resampling = "WildBS",
+                iter = 1000,  alpha = 0.05, seed = 987)
+summary(manova_model)
+```
+
+## p-tables
+
+```{r}
+
+p_table_NoOcc_Occ <- ddply(data_combined,.(Modality),summarise,p_values =t.test(corr_coef[Vision=="NoOcc"],corr_coef[Vision=="Occ"],paired=TRUE)[[3]],t_values =t.test(corr_coef[Vision=="NoOcc"],corr_coef[Vision=="Occ"],paired=TRUE)[[1]],
+                           ges=compute_ges_t_test(t.test(corr_coef[Vision=="NoOcc"],corr_coef[Vision=="Occ"],paired=TRUE)),
+                           cohens_d = signif(mean(corr_coef[Vision=="NoOcc"]-corr_coef[Vision=="Occ"],na.rm=TRUE)/sd(corr_coef[Vision=="NoOcc"]-corr_coef[Vision=="Occ"],na.rm=TRUE),2))
+
+p_table_NoOcc_Occ["adj_p"] <- p.adjust(p_table_NoOcc_Occ$p_values,method = "BH")
+p_table_NoOcc_Occ["adj_sig"] <- p.adjust(p_table_NoOcc_Occ$p_values,method = "BH")<0.05
+p_table_NoOcc_Occ
+```
+
+
+# Surrogate analyses
+
+```{r}
+INS_data_ECG <- INS_new_load_surrogate_ECG_EDA_Resp_pupil_corr_data("ECG")
+MBS_data_ECG <- MBS_new_load_surrogate_ECG_EDA_Resp_pupil_corr_data("ECG")
+
+INS_data_EDA <- INS_new_load_surrogate_ECG_EDA_Resp_pupil_corr_data("EDA")
+MBS_data_EDA <- MBS_new_load_surrogate_ECG_EDA_Resp_pupil_corr_data("EDA")
+
+INS_data_Resp <- INS_new_load_surrogate_ECG_EDA_Resp_pupil_corr_data("Resp")
+MBS_data_Resp <- MBS_new_load_surrogate_ECG_EDA_Resp_pupil_corr_data("Resp")
+
+INS_pupil_data <- INS_new_load_surrogate_ECG_EDA_Resp_pupil_corr_data("Pupil")
+MBS_pupil_data <- MBS_new_load_surrogate_ECG_EDA_Resp_pupil_corr_data("Pupil")
+
+
+
+INS_data <- rbind(INS_data_ECG,INS_data_EDA,INS_data_Resp,INS_pupil_data)
+MBS_data <- rbind(MBS_data_ECG,MBS_data_EDA,MBS_data_Resp,MBS_pupil_data)
+
+
+data_combined <- rbind(INS_data,MBS_data)
+
+p_table_NoOcc_Occ <- ddply(data_combined,.(Modality,Vision),summarise,
+                           p_values =t.test(corr_coef[surrogate=="ori"]-corr_coef[surrogate=="pseudo"])[[3]],
+                           t_values =t.test(corr_coef[surrogate=="ori"]-corr_coef[surrogate=="pseudo"])[[1]],
+                           avg_pseudo= signif(mean(corr_coef[surrogate=="pseudo"],na.rm=TRUE),2))
+
+p_table_NoOcc_Occ["adj_p"] <- p.adjust(p_table_NoOcc_Occ$p_values,method = "BH")
+p_table_NoOcc_Occ["adj_sig"] <- p.adjust(p_table_NoOcc_Occ$p_values,method = "BH")<0.05
+p_table_NoOcc_Occ
+
+```
+
+
+# behavioral synch
+```{r}
+
+INS_dir <- 'E:\\Projects\\IBS\\Results\\EEG\\Physio\\no_aggressive_CAR_ASR_10_ICA_appended_trials\\';
+data_INS <- read.csv(paste0(INS_dir,'physio_behav_corr_outlier_2.50ecg_rsp_pupil_3d_behav.csv'))
+
+MBS_dir = 'E:\\Projects\\MBS\\Results\\Physio\\';
+data_MBS <- read.csv(paste0(MBS_dir,'corr_coef_outlier_2.5.csv'))
+
+data_behav_synch <- rbind(data_INS,data_MBS)
+
+t.test(data_behav_synch$Smile)
+t.test(data_behav_synch$video)
+t.test(data_behav_synch$Gaze)
+
+```
